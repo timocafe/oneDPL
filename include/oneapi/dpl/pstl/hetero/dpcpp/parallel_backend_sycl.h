@@ -303,7 +303,10 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _Up __u, _Cp __combine, _
     _PRINT_INFO_IN_DEBUG_MODE(__exec, __work_group_size, __max_compute_units);
 
     // Create temporary global buffers to store temporary values
-    sycl::buffer<_Tp> __temp(sycl::range<1>(2 * __n_groups));
+    using _RangeType = onedpl::dpl::__internal::__get_first_range_type<Ranges...>;
+    using _ValueType = oneapi::dpl::__internal::__value_t<_RangeType>;
+    _ValueType *__temp = sycl::malloc_shared<_ValueType>(2 * __n_groups, __exec.queue().get_device(), __exec.queue().get_context());
+    //sycl::buffer<_Tp> __temp(sycl::range<1>(2 * __n_groups));
     // __is_first == true. Reduce over each work_group
     // __is_first == false. Reduce between work groups
     bool __is_first = true;
@@ -319,7 +322,7 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _Up __u, _Cp __combine, _
             __cgh.depends_on(__reduce_event);
 
             oneapi::dpl::__ranges::__require_access(__cgh, __rngs...); //get an access to data under SYCL buffer
-            auto __temp_acc = __temp.template get_access<access_mode::read_write>(__cgh);
+            //auto __temp_acc = __temp.template get_access<access_mode::read_write>(__cgh);
             sycl::accessor<_Tp, 1, access_mode::read_write, sycl::access::target::local> __temp_local(
                 sycl::range<1>(__work_group_size), __cgh);
             __cgh.parallel_for<_ReduceKernel>(
@@ -358,7 +361,11 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _Up __u, _Cp __combine, _
         __n_items = __n_groups;
         __n_groups = (__n_items - 1) / __work_group_size + 1;
     } while (__n_items > 1);
-    return __temp.template get_access<access_mode::read_write>()[__offset_2];
+
+    auto __return_val = __temp[__offset_2];
+    sycl::free(__temp, __exec.queue().get_context());
+    return __return_val;
+    //return __temp.template get_access<access_mode::read_write>()[__offset_2];
 }
 
 //------------------------------------------------------------------------
