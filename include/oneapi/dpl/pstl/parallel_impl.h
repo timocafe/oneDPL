@@ -32,9 +32,9 @@ namespace __internal
 //-----------------------------------------------------------------------
 /** Return extremum value returned by brick f[i,j) for subranges [i,j) of [first,last)
 Each f[i,j) must return a value in [i,j). */
-template <class _ExecutionPolicy, class _Index, class _Brick, class _IsFirst>
+template <class _ExecutionPolicy, class _Index, class _Brick, class _IsFirst, typename... _Args>
 _Index
-__parallel_find(_ExecutionPolicy&& __exec, _Index __first, _Index __last, _Brick __f, _IsFirst)
+__parallel_find(__parallel_tag<_ExecutionPolicy, _Args...> __tag, _ExecutionPolicy&& __exec, _Index __first, _Index __last, _Brick __f, _IsFirst)
 {
     typedef typename ::std::iterator_traits<_Index>::difference_type _DifferenceType;
     const _DifferenceType __n = __last - __first;
@@ -44,7 +44,7 @@ __parallel_find(_ExecutionPolicy&& __exec, _Index __first, _Index __last, _Brick
 
     ::std::atomic<_DifferenceType> __extremum(__initial_dist);
     // TODO: find out what is better here: parallel_for or parallel_reduce
-    __par_backend::__parallel_for(::std::forward<_ExecutionPolicy>(__exec), __first, __last,
+    __par_backend::__parallel_for(__tag, ::std::forward<_ExecutionPolicy>(__exec), __first, __last,
                                   [__comp, __f, __first, &__extremum](_Index __i, _Index __j) {
                                       // See "Reducing Contention Through Priority Updates", PPoPP '13, for discussion of
                                       // why using a shared variable scales fairly well in this situation.

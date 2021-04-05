@@ -153,8 +153,9 @@ struct __parallel_tag : __vectorable_tag<_Policy, _IteratorTypes...>
 };
 
 template <class _Policy, class... _IteratorTypes>
-struct __parallel_forward_tag : __vectorable_tag<_Policy, _IteratorTypes...>
+struct __parallel_forward_tag
 {
+    using __is_vector = ::std::false_type;
 };
 
 template <typename _Policy, typename... _IteratorTypes>
