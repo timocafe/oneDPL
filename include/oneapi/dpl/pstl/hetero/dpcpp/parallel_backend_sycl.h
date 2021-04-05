@@ -266,6 +266,8 @@ __parallel_for(_ExecutionPolicy&& __exec, _Fp __brick, _Index __count, _Ranges&&
 // parallel_transform_reduce - sync pattern
 //------------------------------------------------------------------------
 
+#define _TRANSFORM_REDUCE_USE_USM 1
+
 template <typename _Tp, ::std::size_t __grainsize = 4, typename _ExecutionPolicy, typename _Up, typename _Cp,
           typename _Rp, typename... _Ranges>
 oneapi::dpl::__internal::__enable_if_device_execution_policy<_ExecutionPolicy, _Tp>
@@ -303,10 +305,15 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _Up __u, _Cp __combine, _
     _PRINT_INFO_IN_DEBUG_MODE(__exec, __work_group_size, __max_compute_units);
 
     // Create temporary global buffers to store temporary values
-    using _RangeType = onedpl::dpl::__internal::__get_first_range_type<Ranges...>;
+#ifdef _TRANSFORM_REDUCE_USE_USM
+//#warning "we use USM"
+    using _RangeType = typename oneapi::dpl::__ranges::__get_first_range_type<_Ranges...>::type;
     using _ValueType = oneapi::dpl::__internal::__value_t<_RangeType>;
-    _ValueType *__temp = sycl::malloc_shared<_ValueType>(2 * __n_groups, __exec.queue().get_device(), __exec.queue().get_context());
-    //sycl::buffer<_Tp> __temp(sycl::range<1>(2 * __n_groups));
+    _ValueType *__temp = sycl::malloc_device<_ValueType>(2 * __n_groups, __exec.queue().get_device(), __exec.queue().get_context());
+#else
+//#warning "we do not use USM"
+    sycl::buffer<_Tp> __temp(sycl::range<1>(2 * __n_groups));
+#endif
     // __is_first == true. Reduce over each work_group
     // __is_first == false. Reduce between work groups
     bool __is_first = true;
@@ -322,7 +329,9 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _Up __u, _Cp __combine, _
             __cgh.depends_on(__reduce_event);
 
             oneapi::dpl::__ranges::__require_access(__cgh, __rngs...); //get an access to data under SYCL buffer
-            //auto __temp_acc = __temp.template get_access<access_mode::read_write>(__cgh);
+#ifndef _TRANSFORM_REDUCE_USE_USM
+	    auto __temp_acc = __temp.template get_access<access_mode::read_write>(__cgh);
+#endif
             sycl::accessor<_Tp, 1, access_mode::read_write, sycl::access::target::local> __temp_local(
                 sycl::range<1>(__work_group_size), __cgh);
             __cgh.parallel_for<_ReduceKernel>(
@@ -342,14 +351,24 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _Up __u, _Cp __combine, _
                     {
                         // TODO: check the approach when we use grainsize here too
                         if (__global_idx < __n_items)
-                            __temp_local[__local_idx] = __temp_acc[__offset_2 + __global_idx];
+			{
+#ifdef _TRANSFORM_REDUCE_USE_USM
+                            __temp_local[__local_idx] = __temp[__offset_2 + __global_idx];
+#else
+			    __temp_local[__local_idx] = __temp_acc[__offset_2 + __global_idx];
+#endif
+			}
                         __item_id.barrier(sycl::access::fence_space::local_space);
                     }
                     // 2. Reduce within work group using local memory
                     _Tp __result = __brick_reduce(__item_id, __global_idx, __n_items, __temp_local);
                     if (__local_idx == 0)
                     {
+#ifdef _TRANSFORM_REDUCE_USE_USM
+			__temp[__offset_1 + __item_id.get_group(0)] = __result;
+#else
                         __temp_acc[__offset_1 + __item_id.get_group(0)] = __result;
+#endif
                     }
                 });
         });
@@ -361,11 +380,14 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _Up __u, _Cp __combine, _
         __n_items = __n_groups;
         __n_groups = (__n_items - 1) / __work_group_size + 1;
     } while (__n_items > 1);
-
-    auto __return_val = __temp[__offset_2];
+#ifdef _TRANSFORM_REDUCE_USE_USM
+    _ValueType __return_val[1];
+    __exec.queue().memcpy(__return_val, __temp + __offset_2, sizeof(_ValueType));
     sycl::free(__temp, __exec.queue().get_context());
-    return __return_val;
-    //return __temp.template get_access<access_mode::read_write>()[__offset_2];
+    return *__return_val;
+#else
+    return __temp.template get_access<access_mode::read_write>()[__offset_2];
+#endif
 }
 
 //------------------------------------------------------------------------
